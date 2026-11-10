@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Buscador Equipos</title>
+<style>
+  :root { --bg: #f3f4f6; --card: #fff; --text: #111; --border: #e5e7eb; --input: #fff; --input-border: #ccc; --err: #b91c1c; color-scheme: light; }
+  :root[data-theme="dark"] { --bg: #111827; --card: #1f2937; --text: #f3f4f6; --border: #374151; --input: #111827; --input-border: #4b5563; --err: #f87171; color-scheme: dark; }
+  body { font-family: system-ui, sans-serif; background: var(--bg); margin: 0; color: var(--text); }
+  input { background: var(--input); color: var(--text); }
+  #tema { position: fixed; top: 12px; right: 12px; width: auto; margin: 0; padding: 6px 12px; background: #6b7280; }
+  .card { background: var(--card); max-width: 360px; margin: 10vh auto; padding: 24px; border-radius: 10px; box-shadow: 0 2px 10px #0002; }
+  .wide { max-width: 900px; }
+  h1 { font-size: 1.3rem; margin-top: 0; }
+  label { display: block; margin: 12px 0 4px; font-size: .9rem; }
+  input { width: 100%; box-sizing: border-box; padding: 9px; border: 1px solid var(--input-border); border-radius: 6px; font-size: 1rem; }
+  button { margin-top: 16px; width: 100%; padding: 10px; border: 0; border-radius: 6px; background: #2563eb; color: #fff; font-size: 1rem; cursor: pointer; }
+  button:disabled { opacity: .6; }
+  .err { color: var(--err); margin-top: 12px; min-height: 1.2em; }
+  table { border-collapse: collapse; width: 100%; margin-top: 12px; font-size: .9rem; }
+  td, th { border-bottom: 1px solid var(--border); padding: 6px; text-align: left; }
+  .top { display: flex; justify-content: space-between; align-items: center; }
+  .top button { width: auto; margin: 0; padding: 6px 12px; background: #6b7280; }
+</style>
+</head>
+<body>
+<button id="tema" type="button"></button>
+<form id="login" class="card">
+  <h1>Buscador Equipos</h1>
+  <label for="user">Usuario SQL</label>
+  <input id="user" autocomplete="username" required>
+  <label for="password">Contraseña</label>
+  <input id="password" type="password" autocomplete="current-password" required>
+  <button>Entrar</button>
+  <div class="err" id="err" role="alert"></div>
+</form>
+
+<div id="app" class="card wide" hidden>
+  <div class="top"><h1>Conectado como <span id="who"></span></h1><div><button id="actualizar">Actualizar</button> <button id="logout">Salir</button></div></div>
+  <form id="buscarSerie">
+    <label for="sn">Buscar número de serie</label>
+    <input id="sn" placeholder="Ej: B4C0680P04600662">
+  </form>
+  <table id="snTabla" hidden><thead><tr><th>Serie / descripción</th><th>Cliente</th><th>NIF</th><th>Pedido</th><th>Fecha</th></tr></thead><tbody id="snRows"></tbody></table>
+  <form id="buscar">
+    <label for="q">Buscar cliente (nombre, nombre comercial o NIF)</label>
+    <input id="q" placeholder="Ej: MASCOTA">
+  </form>
+  <div class="err" id="err2" role="alert"></div>
+  <table><thead><tr><th>Cód.</th><th>Nombre</th><th>Comercial</th><th>NIF</th></tr></thead><tbody id="clientes"></tbody></table>
+  <h2 id="pedTitulo" hidden></h2>
+  <table id="pedTabla" hidden><thead><tr><th>Serie / descripción</th><th>Pedido</th><th>Unid.</th><th>Fecha</th></tr></thead><tbody id="pedidos"></tbody></table>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+// Theme: remembered per browser; first visit follows the system setting.
+function setTema(t) {
+  document.documentElement.dataset.theme = t;
+  $('tema').textContent = t === 'dark' ? '☀ Modo claro' : '☾ Modo oscuro';
+  try { localStorage.setItem('tema', t); } catch {}
+}
+let temaGuardado = null;
+try { temaGuardado = localStorage.getItem('tema'); } catch {}
+setTema(temaGuardado || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+$('tema').onclick = () => setTema(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+$('login').onsubmit = async e => {
+  e.preventDefault();
+  const btn = e.target.querySelector('button');
+  btn.disabled = true; $('err').textContent = '';
+  try {
+    const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user: $('user').value, password: $('password').value }) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error);
+    $('password').value = '';
+    $('who').textContent = d.user;
+    $('login').hidden = true; $('app').hidden = false;
+  } catch (err) { $('err').textContent = err.message; }
+  btn.disabled = false;
+};
+
+async function api(url) {
+  const r = await fetch(url), d = await r.json();
+  if (r.status === 401) location.reload();
+  if (!r.ok) throw new Error(d.error);
+  return d;
+}
+
+const fecha = f => f ? new Date(f).toLocaleDateString('es') : '';
+
+$('buscarSerie').onsubmit = async e => {
+  e.preventDefault();
+  $('err2').textContent = '';
+  try {
+    const rs = await api('/api/serie?q=' + encodeURIComponent($('sn').value));
+    $('snTabla').hidden = false;
+    // First row = most recent order, i.e. where the equipment should be now.
+    $('snRows').innerHTML = rs.map((r, i) => `<tr${i === 0 ? ' style="font-weight:600"' : ''}><td>${esc(r.DESCRIPCION ?? '')}</td>
+      <td>${esc(r.NOMBRECOMERCIAL || r.NOMBRECLIENTE || '')} (${esc(r.CODCLIENTE)})</td><td>${esc(r.NIF20 ?? '')}</td>
+      <td>${esc(r.NUMPEDIDO)}</td><td>${fecha(r.FECHACREACION)}</td></tr>`).join('')
+      || '<tr><td colspan="5">No se encontró ese número de serie (mínimo 3 caracteres)</td></tr>';
+  } catch (err) { $('err2').textContent = err.message; }
+};
+
+$('buscar').onsubmit = async e => {
+  e.preventDefault();
+  $('err2').textContent = '';
+  try {
+    const cs = await api('/api/clientes?q=' + encodeURIComponent($('q').value));
+    $('clientes').innerHTML = cs.map(c => `<tr class="cli" data-cod="${esc(c.CODCLIENTE)}" data-nom="${esc(c.NOMBRECOMERCIAL || c.NOMBRECLIENTE)}" style="cursor:pointer">
+      <td>${esc(c.CODCLIENTE)}</td><td>${esc(c.NOMBRECLIENTE ?? '')}</td><td>${esc(c.NOMBRECOMERCIAL ?? '')}</td><td>${esc(c.NIF20 ?? '')}</td></tr>`).join('')
+      || '<tr><td colspan="4">Sin resultados</td></tr>';
+    $('pedTitulo').hidden = $('pedTabla').hidden = true;
+    if (cs.length === 1) verSeries(cs[0].CODCLIENTE, cs[0].NOMBRECOMERCIAL || cs[0].NOMBRECLIENTE);
+  } catch (err) { $('err2').textContent = err.message; }
+};
+
+async function verSeries(cod, nom) {
+  $('err2').textContent = '';
+  try {
+    const ps = await api(`/api/clientes/${encodeURIComponent(cod)}/series`);
+    $('pedTitulo').textContent = `Números de serie de ${nom}`;
+    $('pedTitulo').hidden = $('pedTabla').hidden = false;
+    $('pedidos').innerHTML = ps.map(p => `<tr><td>${esc(p.DESCRIPCION ?? '')}</td><td>${esc(p.NUMPEDIDO)}</td><td>${esc(p.UNID1 ?? '')}</td>
+      <td>${fecha(p.FECHACREACION)}</td></tr>`).join('')
+      || '<tr><td colspan="4">Este cliente no tiene números de serie en sus pedidos</td></tr>';
+  } catch (err) { $('err2').textContent = err.message; }
+}
+
+$('clientes').onclick = e => {
+  const tr = e.target.closest('tr.cli');
+  if (tr) verSeries(tr.dataset.cod, tr.dataset.nom);
+};
+
+$('actualizar').onclick = async () => {
+  const b = $('actualizar');
+  b.disabled = true; b.textContent = 'Actualizando...'; $('err2').textContent = '';
+  try {
+    const r = await fetch('/api/actualizar', { method: 'POST' }), d = await r.json();
+    if (!r.ok) throw new Error(d.error);
+    // Server restarts with the new code; the session is lost, so wait and reload to the login.
+    setTimeout(() => location.reload(), 3000);
+  } catch (err) { $('err2').textContent = err.message; b.disabled = false; b.textContent = 'Actualizar'; }
+};
+
+$('logout').onclick = async () => { await fetch('/api/logout', { method: 'POST' }); location.reload(); };
+</script>
+</body>
+</html>
