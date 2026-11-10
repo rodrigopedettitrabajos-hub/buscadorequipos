@@ -2,11 +2,16 @@ const express = require('express');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { execFile, spawn } = require('child_process');
 const { connect } = require('./db');
+
+// Inside BuscadorEquipos.exe the page is an embedded asset; in dev it is read from public/.
+const sea = (() => { try { const s = require('node:sea'); return s.isSea() ? s : null; } catch { return null; } })();
+const EXE_URL = 'https://github.com/rodrigopedettitrabajos-hub/buscadorequipos/releases/latest/download/BuscadorEquipos.exe';
 
 const app = express();
 app.use(express.json());
-app.use(express.static(__dirname + '/public'));
+app.get('/', (req, res) => res.type('html').send(sea ? sea.getAsset('index.html', 'utf8') : fs.readFileSync(path.join(__dirname, 'public/index.html'), 'utf8')));
 
 // shortcut: sessions live in memory, lost on restart; fine for a LAN tool.
 const sessions = new Map(); // token -> { pool, user, last }
@@ -93,33 +98,42 @@ app.get('/api/clientes/:cod/series', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// "Actualizar": pulls the app files from UPDATE_SOURCE (an https base URL or a folder path),
-// then exits with code 3 so Iniciar.bat restarts it with the new code.
-const APP_FILES = ['server.js', 'db.js', 'public/index.html'];
-app.post('/api/actualizar', auth, async (req, res) => {
-  const src = process.env.UPDATE_SOURCE;
-  if (!src) return res.status(400).json({ error: 'No hay origen de actualizaciones configurado (UPDATE_SOURCE en .env)' });
-  try {
-    // Download everything first; only write if all files arrived, so a failed update never leaves a half-updated app.
-    const nuevos = await Promise.all(APP_FILES.map(async f => {
-      let txt;
-      if (/^https?:\/\//.test(src)) {
-        const r = await fetch(`${src.replace(/\/$/, '')}/${f}`, { cache: 'no-store' });
-        if (!r.ok) throw new Error(`${f}: HTTP ${r.status}`);
-        txt = await r.text();
-      } else txt = fs.readFileSync(path.join(src, f), 'utf8');
-      if (!txt.trim()) throw new Error(`${f} vino vacío`);
-      return [f, txt];
-    }));
-    for (const [f, txt] of nuevos) fs.writeFileSync(path.join(__dirname, f), txt);
-    res.json({ ok: true });
-    setTimeout(() => process.exit(3), 300);
-  } catch (e) { res.status(500).json({ error: 'No se pudo actualizar: ' + e.message }); }
-});
-
 setInterval(() => {
   for (const [t, s] of sessions) if (Date.now() - s.last > TTL) { s.pool.close(); sessions.delete(t); }
 }, 60000).unref();
 
+// "Actualizar": download the latest released exe, swap it in place (Windows lets a running exe be renamed), relaunch.
+app.post('/api/actualizar', auth, async (req, res) => {
+  if (!sea) return res.status(400).json({ error: 'Actualizar solo funciona desde BuscadorEquipos.exe' });
+  const exe = process.execPath, nuevo = exe + '.new', viejo = exe + '.old';
+  try {
+    const r = await fetch(EXE_URL);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (buf.length < 20e6 || buf.toString('latin1', 0, 2) !== 'MZ') throw new Error('el archivo descargado no es un .exe válido');
+    fs.writeFileSync(nuevo, buf);
+    fs.rmSync(viejo, { force: true });
+    fs.renameSync(exe, viejo);
+    fs.renameSync(nuevo, exe);
+    res.json({ ok: true });
+    server.close();
+    for (const s of sessions.values()) s.pool.close();
+    setTimeout(() => {
+      spawn(exe, ['--actualizado'], { detached: true, stdio: 'ignore' }).unref();
+      process.exit(0);
+    }, 300);
+  } catch (e) {
+    fs.rmSync(nuevo, { force: true });
+    res.status(500).json({ error: 'No se pudo actualizar: ' + e.message });
+  }
+});
+
+if (sea) fs.rmSync(process.execPath + '.old', { force: true });
+
 const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`Buscador Equipos en http://localhost:${port}`));
+const url = `http://localhost:${port}`;
+const abrir = () => { if (sea && !process.argv.includes('--actualizado')) execFile('cmd', ['/c', 'start', '', url]); };
+const server = app.listen(port, () => { console.log(`Buscador Equipos en ${url}\nCerrá esta ventana para apagarlo.`); abrir(); });
+// Already running (e.g. double-clicked twice): just open the browser on the running one.
+server.on('error', e => { if (e.code === 'EADDRINUSE') { abrir(); setTimeout(() => process.exit(0), 500); } else throw e; });
+
