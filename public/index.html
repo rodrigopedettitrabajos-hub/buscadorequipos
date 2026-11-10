@@ -64,7 +64,10 @@ function setTema(t) {
 let temaGuardado = null;
 try { temaGuardado = localStorage.getItem('tema'); } catch {}
 setTema(temaGuardado || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
-$('tema').onclick = () => setTema(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+// Remember the last user (never the password) so only the password has to be typed.
+try { const u = localStorage.getItem('usuario'); if (u) { $('user').value = u; $('password').focus(); } } catch {}
+
+$('tema').onclick =() => setTema(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
 
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -78,6 +81,7 @@ $('login').onsubmit = async e => {
     const d = await r.json();
     if (!r.ok) throw new Error(d.error);
     $('password').value = '';
+    try { localStorage.setItem('usuario', $('user').value); } catch {}
     $('who').textContent = d.user;
     $('login').hidden = true; $('app').hidden = false;
   } catch (err) { $('err').textContent = err.message; }
