@@ -1,6 +1,6 @@
 {
   "main": "build/app.js",
-  "output": "dist/BuscadorEquipos.exe",
+  "output": "build/BuscadorEquipos.exe",
   "disableExperimentalSEAWarning": true,
   "assets": { "index.html": "public/index.html" }
 }

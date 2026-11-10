@@ -128,7 +128,7 @@ async function verSeries(cod, nom) {
     $('pedTitulo').hidden = $('pedTabla').hidden = false;
     $('pedidos').innerHTML = ps.map(p => `<tr><td>${esc(p.DESCRIPCION ?? '')}</td><td>${esc(p.NUMPEDIDO)}</td><td>${esc(p.UNID1 ?? '')}</td>
       <td>${fecha(p.FECHACREACION)}</td></tr>`).join('')
-      || '<tr><td colspan="4">Este cliente no tiene números de serie en sus pedidos</td></tr>';
+      || '<tr><td colspan="4">Este cliente no tiene líneas en sus pedidos</td></tr>';
   } catch (err) { $('err2').textContent = err.message; }
 }
 

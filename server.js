@@ -81,8 +81,8 @@ app.get('/api/serie', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Order lines of a client that carry a serial number. NUMPEDIDO is unique in PEDVENTACAB (checked in G001).
-// shortcut: detects serials by the markers seen in G001 (SN, S/N, SERIE); add more if they write it another way.
+// All order lines of a client: serials are free text with no fixed marker (e.g. "TABLET - r8YL425J26K").
+// NUMPEDIDO is unique in PEDVENTACAB (checked in G001).
 app.get('/api/clientes/:cod/series', auth, async (req, res) => {
   const cod = parseInt(req.params.cod, 10);
   if (!Number.isInteger(cod)) return res.status(400).json({ error: 'Código inválido' });
@@ -91,9 +91,7 @@ app.get('/api/clientes/:cod/series', auth, async (req, res) => {
       SELECT CAB.NUMPEDIDO, LIN.DESCRIPCION, LIN.UNID1, CAB.FECHACREACION
       FROM PEDVENTACAB CAB
       INNER JOIN PEDVENTALIN LIN ON CAB.NUMPEDIDO = LIN.NUMPEDIDO
-      WHERE CAB.CODCLIENTE = @cod
-        AND (LIN.DESCRIPCION LIKE '%SN%' OR LIN.DESCRIPCION LIKE '%S/N%' OR LIN.DESCRIPCION LIKE '%SERIE%')
-      ORDER BY CAB.FECHACREACION DESC`);
+      WHERE CAB.CODCLIENTE = @cod      ORDER BY CAB.FECHACREACION DESC`);
     res.json(r.recordset);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
